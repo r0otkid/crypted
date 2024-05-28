@@ -47,8 +47,8 @@ async def _handle_response(update: Update, bot: Bot, trigger: str) -> dict:
     async def _get_context(class_path) -> dict:
         module_name, class_name = class_path.rsplit('.', 1)
         module = importlib.import_module(module_name)
-        cls = getattr(module, class_name)
-        return await cls(user=user).ctx()
+        cls = getattr(module, class_name) if hasattr(module, class_name) else None
+        return await cls(user=user).ctx() if cls else {}
 
     empty = _('Ответ не найден')
     user = await get_user(update=update)
