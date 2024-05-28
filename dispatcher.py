@@ -11,7 +11,7 @@ from database.response import get_response
 from database.state import States, get_state, set_state
 from database.user import update_or_create_user
 from database.user import get_user
-from telegram import answer_callback_query, delete_last_message
+from telegram import answer_callback_query, delete_last_message, send_message
 
 class CustomDispatcher:
     def __init__(self):
@@ -62,9 +62,9 @@ async def _handle_response(update: Update, bot: Bot, trigger: str) -> dict:
         response_text = response_data.get('response', empty).format(**context)
         keyboard_id = response_data.get('keyboard_id')
         keyboard = await get_keyboard(keyboard_id) if keyboard_id else None
-        message = await bot.send_message(chat_id=user['user_id'], text=response_text, reply_markup=keyboard)
+        message = await send_message(bot=bot, chat_id=user['user_id'], text=response_text, reply_markup=keyboard)
     else:
-        message = await bot.send_message(chat_id=user['user_id'], text=empty)
+        message = await send_message(bot=bot, chat_id=user['user_id'], text=empty)
     await set_state(user_id=user['user_id'], key=States.LAST_MESSAGE, value=message.message_id)
     return user
 
