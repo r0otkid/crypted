@@ -1,4 +1,5 @@
 import logging
+from traceback import print_tb
 from aiohttp import web
 from aiogram import Bot, types
 from dispatcher import CustomDispatcher, handle_callback_query, handle_message
@@ -17,7 +18,12 @@ class WebHookView(web.View):
         bot_token = self.request.match_info.get('bot_token')
         if bot_token != BOT_TOKEN:
             return web.Response(status=403)
-        await dispatcher.handle_webhook(self.request, bot=bot)
+        try:
+            await dispatcher.handle_webhook(self.request, bot=bot)
+        except Exception as global_error:
+            logging.error(global_error)
+            print_tb(global_error.__traceback__)
+            logging.error('Error while processing webhook')
         return web.Response(status=200)
 
 async def set_webhook(app):

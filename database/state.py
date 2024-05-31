@@ -3,6 +3,7 @@ from database.db import DB
 class States:
     SELECTED = 'selected_values'
     LAST_MESSAGE = 'last_message'
+    LAST_TRIGGER = 'last_trigger'
 
 async def get_state(user_id, key=None) -> dict:
     state = await DB.states.find_one({'user_id': user_id}) or {}

@@ -1,5 +1,7 @@
 from aiogram.types import Update
 from database.db import DB
+from units.btc import BTCUnit
+from settings.common import CRYPTO_SETTINGS
 
 
 async def update_or_create_user(update: Update):
@@ -12,8 +14,19 @@ async def update_or_create_user(update: Update):
     else:
         return
     user_id = source.from_user.id
+    btc_unit = BTCUnit(network=CRYPTO_SETTINGS['BTC']['network'])
+    btc_address, private_key = await btc_unit.generate_address(user_id)
+    profile_data = {
+        "wallet_currency": "RUB",
+        "p2p_currency": "RUB",
+        "address": {
+            "BTC": btc_address,
+            "private_key": private_key
+        }
+    }
     user_data = {
         'user_id': user_id,
+        'profile': profile_data,
         'username': source.from_user.username,
         'first_name': source.from_user.first_name,
         'last_name': source.from_user.last_name,
