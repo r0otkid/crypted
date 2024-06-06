@@ -96,7 +96,7 @@ async def _handle_response(update: Update, bot: Bot, trigger: str, page: int = 1
 
     # заполняем цепочку триггеров
     await set_state(user_id=user['user_id'], key=States.LAST_TRIGGER, value=trigger)
-    selected = await get_state(user_id=user['user_id'], key=States.SELECTED)
+    selected = await get_state(user_id=user['user_id'], key=States.SELECTED) or []
 
     if trigger in selected:
         index = selected.index(trigger)

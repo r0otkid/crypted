@@ -1,7 +1,11 @@
+from settings.common import CRYPTOS
+
 class BaseTriggers:
     START = '/start'
-    BTC = 'BTC'
-    TON = 'TON'
+    BTC = CRYPTOS[0]
+    TRX = CRYPTOS[1]
+    TON = CRYPTOS[2]
+    ETH = CRYPTOS[3]
     USER_INPUT = 'user_input'
 
 class CheckTriggers:

@@ -7,7 +7,7 @@ class States:
 
 async def get_state(user_id, key=None) -> dict:
     state = await DB.states.find_one({'user_id': user_id}) or {}
-    return state.get(key, {}) if key else state
+    return state.get(key) if key else state
 
 async def set_state(user_id, key, value):
     state = await get_state(user_id=user_id)

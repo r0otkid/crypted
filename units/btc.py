@@ -109,7 +109,7 @@ class BTCUnit(Unit):
             print(f"Error fetching balance: {e}")
             return 0.0
 
-    async def send_coins(self, from_address: str, to_address: str, amount: float, user_id: str) -> str:
+    async def send_coins(self, user: dict, to_address: str, amount: float) -> str:
         # Convert the amount from BTC to satoshis
         amount_satoshi = int(amount * 1e8)
 
@@ -129,7 +129,7 @@ class BTCUnit(Unit):
                 async with session.post(
                     f'{base_url}/txs/new',
                     json={
-                        'inputs': [{'addresses': [from_address]}],
+                        'inputs': [{'addresses': [user['profile']['wallet']['TON']['address']]}],
                         'outputs': [{'addresses': [to_address], 'value': amount_satoshi}],
                     },
                 ) as response:

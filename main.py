@@ -1,8 +1,10 @@
+import asyncio
 import logging
 from traceback import print_tb
 from aiohttp import web
 from aiogram import Bot, types
 from dispatcher import CustomDispatcher, handle_callback_query, handle_message
+from rates import CryptoRatesUpdater
 from settings.common import BOT_TOKEN, BASE_URL
 
 logging.basicConfig(level=logging.INFO)
@@ -33,8 +35,12 @@ async def set_webhook(app):
     logging.info(f'Webhook set to {webhook_url}')
 
 app = web.Application()
+updater = CryptoRatesUpdater(update_interval=60)
+
 app.router.add_view('/{bot_token}/', WebHookView)
 app.on_startup.append(set_webhook)
+# app.on_startup.append(updater.start)
+
 
 if __name__ == '__main__':
     web.run_app(app, host='127.0.0.1', port=7878)
