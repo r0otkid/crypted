@@ -1,7 +1,7 @@
 from typing import Optional
 from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
 from jinja2 import Environment, FileSystemLoader
-from context.validators.wallet import BillAmountValidator, CheckAmountValidator
+from validators.wallet import BillAmountValidator, CheckAmountValidator, WithdrawAddressValidator, WithdrawAmountValidator
 from settings.common import BOT_NAME
 from database.bot_settings import get_or_create_bot_settings
 from database.rates import get_all_rates
@@ -132,7 +132,11 @@ class UserInputContext(DefaultContext, UserInputMixin):
             trigger = selected[-3]
         except IndexError:
             trigger = Triggers.START
-        validator_cls = {Triggers.CREATE_CHECK: CheckAmountValidator, Triggers.CREATE_BILL: BillAmountValidator}.get(
+        validator_cls = {
+            Triggers.CREATE_CHECK: CheckAmountValidator,
+            Triggers.CREATE_BILL: BillAmountValidator,
+            Triggers.WITHDRAW: WithdrawAddressValidator,
+        }.get(
             trigger
         )
         validator = validator_cls(self) if validator_cls else None
@@ -142,6 +146,8 @@ class UserInputContext(DefaultContext, UserInputMixin):
             text = await self._render_model_by_code(selected, Triggers.CHECK)
         elif selected[-2] == Triggers.BILL:
             text = await self._render_model_by_code(selected, Triggers.BILL)
+        elif selected[-4] == Triggers.WITHDRAW:
+            text = await WithdrawAmountValidator(self).validate(selected[-1])
         else:
             text = await self.render_template('errors/error.html', {})
         return {"text": text}

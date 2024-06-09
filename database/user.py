@@ -44,13 +44,13 @@ async def update_or_create_user(update: Update):
         db_user = await create_user_dict(source, user_id, date)
 
     crypto_units = [BTCUnit, TRXUnit, TONUnit, ETHUnit]
-
-    for unit_class in crypto_units:
-        address, private_key = await generate_crypto_data(unit_class, user_id)
-        db_user['profile']['wallet'][unit_class.__name__[:-4]].update({
-            'address': address,
-            'private_key': private_key if unit_class is not TRXUnit else private_key.hex()
-        })
+    if not db_user.get('profile', {}).get('wallet'):
+        for unit_class in crypto_units:
+            address, private_key = await generate_crypto_data(unit_class, user_id)
+            db_user['profile']['wallet'][unit_class.__name__[:-4]].update({
+                'address': address,
+                'private_key': private_key if unit_class is not TRXUnit else private_key.hex()
+            })
 
     # Сохраняем обновленные данные пользователя в базе данных
     await DB.users.update_one(

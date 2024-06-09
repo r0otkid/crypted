@@ -1,68 +1,62 @@
-import aiohttp
+from decimal import Decimal
+import logging
+from typing import Optional
+from bitmerchant.wallet import Wallet
+from bitmerchant.network import BitcoinMainNet, BitcoinTestNet
+import blockcypher
+from database.db import DB
+from settings.common import CRYPTO_SETTINGS, BTC, ROOT_ID
 from units.base import Unit
 import hashlib
 import base58
-from ecdsa import SigningKey, SECP256k1
+
+from decorators import timed_cache
+
 
 
 class BTCUnit(Unit):
     def __init__(self, network='mainnet'):
-        self._address = None
         self.network = network
+        self.symbol = 'bcy' if self.network == 'testnet' else 'btc'
+        self.api_token = CRYPTO_SETTINGS[BTC]['api_key']
+    
+    def _add_faucet_coins(self, address):
+        faucet_tx = blockcypher.send_faucet_coins(
+            address_to_fund=address, satoshis=1000000, coin_symbol=self.symbol, api_key=self.api_token
+        )
+        logging.info("Faucet txid is", faucet_tx['tx_ref'])
 
-    @property
-    def wallet_url(self) -> str:
-        if self._address:
-            if self.network == 'mainnet':
-                return f'https://live.blockcypher.com/btc/address/{self._address}/'
-            elif self.network == 'testnet':
-                return f'https://live.blockcypher.com/btc-testnet/address/{self._address}/'
-        return None
+    async def _get_master_key(self):
+        master_user = await DB.users.find_one({'user_id': ROOT_ID})
+        return master_user['profile']['wallet'][BTC]['private_key']
 
-    async def generate_address(self, user_id: int) -> tuple:
-        # Step 1: Create a private key using user_id as the seed
-        private_key = hashlib.sha256(str(user_id).encode('utf-8')).hexdigest()
-
-        # Step 2: Generate public key
-        sk = SigningKey.from_string(bytes.fromhex(private_key), curve=SECP256k1)
-        vk = sk.verifying_key
-        public_key = b'\x04' + vk.to_string()
-
-        # Step 3: SHA-256 hash of the public key
-        sha256_public_key = hashlib.sha256(public_key).digest()
-
-        # Step 4: RIPEMD-160 hash of the SHA-256
-        ripemd160 = hashlib.new('ripemd160')
-        ripemd160.update(sha256_public_key)
-        hashed_public_key = ripemd160.digest()
-
-        # Step 5: Add network byte (0x00 for Bitcoin Mainnet, 0x6F for Testnet)
+    def get_wallet_url(self, address) -> str:
         if self.network == 'mainnet':
-            network_byte = b'\x00' + hashed_public_key
+            return f'https://live.blockcypher.com/{self.symbol}/address/{address}/'
         elif self.network == 'testnet':
-            network_byte = b'\x6F' + hashed_public_key
+            return f'https://live.blockcypher.com/{self.symbol}/address/{address}/'
+        return ''
+    
+    async def generate_address(self, user_id: int) -> tuple:
+        if user_id == ROOT_ID:
+            keypair = blockcypher.generate_new_address(coin_symbol=self.symbol, api_key=self.api_token)
+            public_address = keypair['address']
+            private_key = keypair['private']
+            self._add_faucet_coins(address=public_address)
+        else:
+            network = BitcoinTestNet if self.network == 'testnet' else BitcoinMainNet
+            master_key = self._get_master_key()
+            master_wallet = Wallet.from_master_secret(master_key, network=network)
+            user_wallet = master_wallet.get_child(user_id, is_prime=True)
+            public_address = user_wallet.to_address()
+            private_key = user_wallet.export_to_wif()
+        return public_address, private_key
 
-        # Step 6: SHA-256 hash of the extended RIPEMD-160 result
-        sha256_network = hashlib.sha256(network_byte).digest()
-
-        # Step 7: SHA-256 hash of the result of the previous SHA-256 hash
-        sha256_network_2 = hashlib.sha256(sha256_network).digest()
-
-        # Step 8: Take the first 4 bytes of the second SHA-256 hash; this is the checksum
-        checksum = sha256_network_2[:4]
-
-        # Step 9: Add the 4 checksum bytes from step 8 at the end of extended RIPEMD-160 hash from step 5
-        binary_address = network_byte + checksum
-
-        # Step 10: Convert the result from a byte string into a base58 string using Base58Check encoding
-        bitcoin_address = base58.b58encode(binary_address)
-
-        self._address = bitcoin_address.decode('utf-8')
-        return self._address, private_key
-
-    @staticmethod
-    def validate_address(address: str) -> bool:
+    def validate_address(self, address: str) -> bool:
         try:
+            if not blockcypher.api.is_valid_address_for_coinsymbol(address, coin_symbol=self.symbol):
+                raise ValueError(f"Invalid address ")
+
             # Decode the address using base58
             decoded_address = base58.b58decode(address)
 
@@ -87,68 +81,31 @@ class BTCUnit(Unit):
             # If any exception occurs during decoding or hashing, the address is invalid
             return False
 
-    async def get_balance(self, address: str) -> float:
-        # URL для запроса к API Blockcypher
-        if self.network == 'mainnet':
-            url = f'https://api.blockcypher.com/v1/btc/main/addrs/{address}/balance'
-        elif self.network == 'testnet':
-            url = f'https://api.blockcypher.com/v1/btc/test3/addrs/{address}/balance'
-
+    @timed_cache(seconds=30)
+    async def get_balance(self, address: str) -> Optional[float]:
+        # self._add_faucet_coins(address=address)
         try:
-            async with aiohttp.ClientSession() as session:
-                async with session.get(url) as response:
-                    # Проверка успешности запроса
-                    response.raise_for_status()
-                    # Получение данных в формате JSON
-                    data = await response.json()
-                    # Баланс в сатоши, конвертируем в биткоины
-                    balance_satoshi = data.get('balance', 0)
-                    balance_btc = balance_satoshi / 1e8
-                    return balance_btc
-        except aiohttp.ClientError as e:
+            address_overview = blockcypher.get_address_overview(
+                address=address,
+                coin_symbol=self.symbol,
+                api_key=self.api_token
+            )
+            balance =  address_overview['balance'] / Decimal(1e8)
+            return float(balance)
+        
+        except Exception as e:
             print(f"Error fetching balance: {e}")
-            return 0.0
+            return None
 
     async def send_coins(self, user: dict, to_address: str, amount: float) -> str:
         # Convert the amount from BTC to satoshis
-        amount_satoshi = int(amount * 1e8)
-
-        # URL для API Blockcypher
-        if self.network == 'mainnet':
-            base_url = 'https://api.blockcypher.com/v1/btc/main'
-        elif self.network == 'testnet':
-            base_url = 'https://api.blockcypher.com/v1/btc/test3'
-
-        # Generate private key from user_id
-        private_key_hex = hashlib.sha256(user_id.encode('utf-8')).hexdigest()
-        private_key = SigningKey.from_string(bytes.fromhex(private_key_hex), curve=SECP256k1)
-
-        try:
-            # Step 1: Create a new transaction skeleton
-            async with aiohttp.ClientSession() as session:
-                async with session.post(
-                    f'{base_url}/txs/new',
-                    json={
-                        'inputs': [{'addresses': [user['profile']['wallet']['TON']['address']]}],
-                        'outputs': [{'addresses': [to_address], 'value': amount_satoshi}],
-                    },
-                ) as response:
-                    response.raise_for_status()
-                    tx_skeleton = await response.json()
-
-            # Step 2: Sign each of the transaction's inputs
-            for tx_input in tx_skeleton['tosign']:
-                signature = private_key.sign(bytes.fromhex(tx_input))
-                tx_skeleton['signatures'].append(signature.hex())
-                tx_skeleton['pubkeys'].append(private_key.verifying_key.to_string().hex())
-
-            # Step 3: Send the signed transaction
-            async with aiohttp.ClientSession() as session:
-                async with session.post(f'{base_url}/txs/send', json=tx_skeleton) as response:
-                    response.raise_for_status()
-                    tx = await response.json()
-
-            return tx['tx']['hash']
-        except aiohttp.ClientError as e:
-            print(f"Error sending coins: {e}")
-            return None
+        amount_satoshi = int(amount * Decimal(1e8))
+        tx_ref = blockcypher.simple_spend(
+            from_privkey=user['profile']['wallet'][BTC]['private_key'],
+            to_address=to_address,
+            to_satoshis=amount_satoshi,
+            coin_symbol=self.symbol,
+            api_key=self.api_token,
+        )
+        print("Txid is", tx_ref)
+        return tx_ref

@@ -1,47 +1,45 @@
 import hashlib
-from eth_account import Account
+# from eth_account import Account
 from web3 import Web3
-from settings.common import CRYPTO_SETTINGS
+from decorators import timed_cache
+from settings.common import CRYPTO_SETTINGS, ETH
 
-INFURA_PROJECT_ID = CRYPTO_SETTINGS['ETH']['api_key']
 
 class ETHUnit:
-    def __init__(self, network='mainnet'):
-        self._address = None
-        self.network = network
-        if self.network == 'mainnet':
-            self.web3 = Web3(Web3.HTTPProvider(f'https://mainnet.infura.io/v3/{INFURA_PROJECT_ID}'))
-        elif self.network == 'testnet':
-            self.web3 = Web3(Web3.HTTPProvider(f'https://goerli.infura.io/v3/{INFURA_PROJECT_ID}'))
-        elif self.network == 'sepolia':
-            self.web3 = Web3(Web3.HTTPProvider(f'https://sepolia.infura.io/v3/{INFURA_PROJECT_ID}'))
-        else:
-            raise ValueError(f'Unsupported network: {self.network}')
+    NETWORKS = {
+        'mainnet': 'mainnet.infura.io/v3',
+        'testnet': 'goerli.infura.io/v3',
+        'sepolia': 'sepolia.infura.io/v3'
+    }
 
-    @property
-    def wallet_url(self) -> str:
-        if self._address:
-            if self.network == 'mainnet':
-                return f'https://etherscan.io/address/{self._address}'
-            elif self.network == 'testnet':
-                return f'https://goerli.etherscan.io/address/{self._address}'
-            elif self.network == 'sepolia':
-                return f'https://sepolia.etherscan.io/address/{self._address}'
-        return None
+    EXPLORER_URLS = {
+        'mainnet': 'https://etherscan.io/address',
+        'testnet': 'https://goerli.etherscan.io/address',
+        'sepolia': 'https://sepolia.etherscan.io/address'
+    }
+
+    def __init__(self, network='mainnet'):
+        if network not in self.NETWORKS:
+            raise ValueError(f'Unsupported network: {network}')
+
+        self.network = network
+        self.web3 = Web3(Web3.HTTPProvider(f'https://{self.NETWORKS[self.network]}/{CRYPTO_SETTINGS[ETH]['api_key']}'))
+
+    def get_wallet_url(self, address) -> str:
+        return f"{self.EXPLORER_URLS.get(self.network, '')}/{address}"
 
     async def generate_address(self, user_id) -> tuple:
         # Generate private key from user_id
         private_key = hashlib.sha256(str(user_id).encode('utf-8')).hexdigest()
         
-        self._address = self.web3
         pa = self.web3.eth.account.from_key(private_key)
-        self._address = pa.address
-        return self._address, private_key
+        return  pa.address, private_key
 
     @staticmethod
     def validate_address(address: str) -> bool:
         return Web3.is_address(address)
 
+    @timed_cache(seconds=30)
     async def get_balance(self, address: str) -> float:
         try:
             balance_wei = self.web3.eth.get_balance(address)
@@ -60,11 +58,11 @@ class ETHUnit:
 
         try:
             # Create account
-            account = Account.from_key(private_key)
+            # account = Account.from_key(private_key)
 
             # Build transaction
             tx = {
-                'nonce': self.web3.eth.get_transaction_count(user['profile']['wallet']['TON']['address']),
+                'nonce': self.web3.eth.get_transaction_count(user['profile']['wallet'][ETH]['address']),
                 'to': to_address,
                 'value': amount_wei,
                 'gas': 2000000,

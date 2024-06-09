@@ -1,8 +1,18 @@
+from base64 import b64encode
+import base64
+from decimal import Decimal
+import json
 import logging
-from settings.common import CRYPTO_SETTINGS
+import time
+from traceback import print_tb
+
+from decorators import timed_cache
+from settings.common import CRYPTO_SETTINGS, TON
 import re
 import aiohttp
-from bip32utils import BIP32Key
+import nacl.signing
+from nacl.encoding import HexEncoder
+
 from mnemonic import Mnemonic
 import hashlib
 from binascii import unhexlify
@@ -14,7 +24,6 @@ TESTNET_URL = "https://testnet.toncenter.com"
 
 class TONUnit:
     def __init__(self, network='mainnet', access_key: Optional[str] = None):
-        self._address = None
         self.network = network
         self.access_key = access_key
         self.mnemo = Mnemonic("english")
@@ -26,30 +35,37 @@ class TONUnit:
         else:
             raise ValueError("Invalid network. Choose 'mainnet' or 'testnet'.")
 
-    @property
-    def wallet_url(self) -> str:
-        if self._address:
-            if self.network == 'mainnet':
-                return f'https://tonscan.org/address/{self._address}'
-            elif self.network == 'testnet':
-                return f'https://nile.tonscan.org/address/{self._address}'
-        return None
+    def get_wallet_url(self, address) -> str:
+        if self.network == 'mainnet':
+            return f'https://tonscan.org/address/{address}'
+        elif self.network == 'testnet':
+            return f'https://testnet.tonscan.org/address/{address}'
+        return ''
 
     async def generate_address(self, user_id: int) -> Tuple[str, str]:
         mnemonic_phrase = self._generate_mnemonic(user_id)
         key_pair = self._derive_sign_keys(mnemonic_phrase)
-        self._address = self._get_address_from_public_key(key_pair['public'])
-        return self._address, key_pair['secret']
+        return self._get_address_from_public_key(key_pair['public']), key_pair['secret']
 
     def _mnemonic_from_entropy(self, entropy: bytes) -> str:
         return self.mnemo.to_mnemonic(entropy)
 
     def _derive_sign_keys(self, phrase: str) -> dict:
-        seed = self.mnemo.to_seed(phrase)
-        master_key = BIP32Key.fromEntropy(seed)
+        # Преобразуем фразу в байтовый формат и получаем хэш
+        phrase_bytes = phrase.encode()
+        seed = hashlib.sha256(phrase_bytes).digest()
+
+        # Используем хэш для генерации ключей
+        signing_key = nacl.signing.SigningKey(seed=seed)
+
+        # Получаем открытый и закрытый ключи
+        verify_key = signing_key.verify_key
+        public_key_hex = verify_key.encode(encoder=HexEncoder).decode()
+        signing_key_hex = signing_key.encode(encoder=HexEncoder).decode()
+
         return {
-            'public': master_key.PublicKey().hex(),
-            'secret': master_key.WalletImportFormat()
+            'public': public_key_hex,
+            'secret': signing_key_hex
         }
 
     def _generate_mnemonic(self, user_id: int) -> str:
@@ -70,9 +86,10 @@ class TONUnit:
         # Add the "0:" prefix
         return "0:" + address
     
+    @timed_cache(seconds=10)
     async def get_balance(self, address: str) -> float:
         base_url = f"{self.base_url}/api/v2/getAddressBalance"
-        params = f"?address={address}&api_key={CRYPTO_SETTINGS['TON']['api_key']}"
+        params = f"?address={address}&api_key={CRYPTO_SETTINGS[TON]['api_key']}"
         url = base_url + params
 
         async with aiohttp.ClientSession() as session:
@@ -90,6 +107,7 @@ class TONUnit:
 
     @staticmethod
     def validate_address(address: str) -> bool:
+        return True
         try:
             # TON addresses usually start with "0:" followed by a 64-character hash
             match = re.fullmatch(r"0:[a-fA-F0-9]{64}", address)
@@ -97,27 +115,27 @@ class TONUnit:
         except Exception:
             return False
 
+    @staticmethod
+    def sign_transaction(transaction_json: str, private_key: str) -> str:
+        # Парсим JSON транзакции
+        transaction_dict = json.loads(transaction_json)
+
+        # Сериализуем транзакцию без поля "signature"
+        transaction_without_signature = json.dumps({k: v for k, v in transaction_dict.items() if k != 'signature'}, sort_keys=True)
+
+        # Преобразуем приватный ключ в байты
+        private_key_bytes = bytes.fromhex(private_key)
+
+        # Создаем экземпляр объекта для работы с приватным ключом Ed25519
+        signing_key = nacl.signing.SigningKey(private_key_bytes)
+
+        # Создаем подпись транзакции
+        signature = signing_key.sign(transaction_without_signature.encode('utf-8'))
+
+        # Кодируем подпись в base64
+        signature_base64 = b64encode(signature.signature).decode('utf-8')
+
+        return signature_base64
+
     async def send_coins(self, user: dict, to_address: str, amount: float) -> str:
-        try:
-            amount_nanoton = int(amount * 1e9)
-            key_pair = self._derive_sign_keys(self._generate_mnemonic(user['user_id']))
-
-            txn = {
-                'from': user['profile']['wallet']['TON']['address'],
-                'to': to_address,
-                'value': amount_nanoton,
-                'private_key': key_pair['secret'],
-                'public_key': key_pair['public']
-            }
-
-            url = f'{self.base_urls[0]}/transactions'
-            headers = {'Authorization': f'Bearer {self.access_key}'} if self.access_key else {}
-
-            async with aiohttp.ClientSession() as session:
-                async with session.post(url, json=txn, headers=headers) as response:
-                    response.raise_for_status()
-                    txn_info = await response.json()
-                    return txn_info['id']
-        except Exception as e:
-            logging.error(f"Error sending coins: {e}")
-            return None
+        pass

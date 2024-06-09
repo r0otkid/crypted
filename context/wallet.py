@@ -1,15 +1,11 @@
 import asyncio
 from context.base import DefaultContext
 from gettext import gettext as _
-from concurrent.futures import ThreadPoolExecutor
 from database.bill import get_bills_by_user
 from database.check import get_checks_by_user
 from database.user import get_user_by_id, save_user
 from settings.common import CRYPTO_SETTINGS, CRYPTOS
-from units.btc import BTCUnit
-from units.eth import ETHUnit
-from units.trx import TRXUnit
-from units.ton import TONUnit
+from utils import get_unit
 
 
 class WalletContext(DefaultContext):
@@ -23,27 +19,38 @@ class WalletContext(DefaultContext):
         rates = await self.get_rates()
         wallet_currency = self.user['profile']['wallet_currency']
 
-        fiat_balances = {crypto: round(rates.get(crypto, 0) * balances[crypto] * rates.get(wallet_currency, 0), 2) for crypto in CRYPTOS}
+        fiat_balances = {
+            crypto: round(rates.get(crypto, 0) * balances[crypto] * rates.get(wallet_currency, 0), 2)
+            for crypto in CRYPTOS
+        }
 
         result = {f"{crypto.lower()}_balance": balances[crypto] for crypto in CRYPTOS}
         result.update({f"{crypto.lower()}_balance_fiat": fiat_balances[crypto] for crypto in CRYPTOS})
+        result.update(
+            {
+                f"{crypto.lower()}_wallet_link": get_unit(crypto)(network=CRYPTO_SETTINGS[crypto]['network']).get_wallet_url(
+                    db_user['profile']['wallet'][crypto]['address']
+                )
+                for crypto in CRYPTOS
+            }
+        )
         result['wallet_currency'] = wallet_currency
-        result['total_balance'] = sum(fiat_balances.values())
+        result['total_balance'] = round(sum(fiat_balances.values()), 2)
 
         return result
 
     async def _update_wallet_balances(self):
         db_user = await get_user_by_id(user_id=self.user['user_id'])
 
-        units = {crypto: globals()[f"{crypto}Unit"](network=CRYPTO_SETTINGS[crypto]['network']) for crypto in CRYPTOS}
-
         for crypto in CRYPTOS:
+            unit = get_unit(crypto)
             address = self.user['profile']['wallet'][crypto]['address']
-            balance = await units[crypto].get_balance(address=address)
-
-            db_user['profile']['wallet'][crypto]['balance'] = balance
+            balance = await unit(network=CRYPTO_SETTINGS[crypto]['network']).get_balance(address=address)
+            if balance:
+                db_user['profile']['wallet'][crypto]['balance'] = balance
 
         await save_user(user_id=self.user['user_id'], user_data=db_user)
+
 
 class ReplenishContext(DefaultContext):
     async def ctx(self):
@@ -75,7 +82,7 @@ class CryptoContext(DefaultContext):
         min_amount = bot_settings['limits'][crypto]['min']
         max_amount = bot_settings['limits'][crypto]['max']
         rates = await self.get_rates()
-        rate =rates.get(crypto, 0)
+        rate = rates.get(crypto, 0)
         templates_map = {
             self.triggers.REPLENISH: ["wallet/replenish.html", {**ctx, 'address': address}],
             self.triggers.WITHDRAW: ["wallet/withdraw.html", ctx],
@@ -84,7 +91,7 @@ class CryptoContext(DefaultContext):
                 {
                     **ctx,
                     "max_value_fiat": round(max_amount * rate, 2),
-                    "min_value_fiat": round(min_amount  * rate, 2),
+                    "min_value_fiat": round(min_amount * rate, 2),
                     "wallet_currency": self.user['profile']['wallet_currency'],
                     "min_check_amount": min_amount,
                     "max_check_amount": max_amount,
@@ -95,7 +102,7 @@ class CryptoContext(DefaultContext):
                 {
                     **ctx,
                     "max_value_fiat": round(max_amount * rate, 2),
-                    "min_value_fiat": round(min_amount  * rate, 2),
+                    "min_value_fiat": round(min_amount * rate, 2),
                     "wallet_currency": self.user['profile']['wallet_currency'],
                     "min_bill_amount": min_amount,
                     "max_bill_amount": max_amount,
