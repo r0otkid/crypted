@@ -1,11 +1,8 @@
 from base64 import b64encode
-import base64
-from decimal import Decimal
 import json
 import logging
-import time
-from traceback import print_tb
 
+from database.db import DB
 from decorators import timed_cache
 from settings.common import CRYPTO_SETTINGS, TON
 import re
@@ -19,14 +16,17 @@ from binascii import unhexlify
 from hashlib import sha512
 from typing import Optional, Tuple
 
+from units.base import Unit
+
 MAINNET_URL = "https://toncenter.com"
 TESTNET_URL = "https://testnet.toncenter.com"
 
-class TONUnit:
+class TONUnit(Unit):
     def __init__(self, network='mainnet', access_key: Optional[str] = None):
         self.network = network
         self.access_key = access_key
         self.mnemo = Mnemonic("english")
+        self.crypto = TON
 
         if network == 'mainnet':
             self.base_url = MAINNET_URL
@@ -96,13 +96,13 @@ class TONUnit:
             try:
                 async with session.get(url) as response:
                     data = await response.json()
-                    print(data)
+                    user = await DB.users.find_one({f'profile.wallet.{TON}.address': address})
                     if 'result' in data and data['ok']:
-                        return float(data['result']) / 10**9
+                        return float(data['result']) / 10**9 - await self.get_hold(user_id=user['user_id'], crypto=TON)
                     else:
                         raise ValueError("Invalid response: 'balance' not found")
             except Exception as e:
-                logging.error(f"Error retrieving balance: {e}")
+                logging.error(f"[{TON}] Error fetching balance: {e}")
                 return 0.0
 
     @staticmethod
@@ -114,6 +114,18 @@ class TONUnit:
             return match is not None
         except Exception:
             return False
+    
+    async def get_network_fee(self) -> float:
+        try:
+            estimated_size = self.estimate_transaction_size()
+            # Примерная оценка стоимости газа для сети TON
+            fee_per_byte = 0.000001  # Примерная стоимость за байт в Нано ТОН (нужно уточнять)
+            total_fee = fee_per_byte * estimated_size
+
+            return total_fee
+        except Exception as e:
+            print(f"Error fetching network fees: {e}")
+            return {}
 
     @staticmethod
     def sign_transaction(transaction_json: str, private_key: str) -> str:
@@ -139,3 +151,11 @@ class TONUnit:
 
     async def send_coins(self, user: dict, to_address: str, amount: float) -> str:
         pass
+
+    def estimate_transaction_size(self) -> float:
+        # Примерная оценка размера транзакции в kb для TON
+        return 0.5
+
+    def from_satoshis(self, fee_in_nano: int) -> float:
+        # 1 TON = 1,000,000,000 nano TON
+        return fee_in_nano / 1e9

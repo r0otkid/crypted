@@ -24,13 +24,13 @@ class WalletContext(DefaultContext):
             for crypto in CRYPTOS
         }
 
-        result = {f"{crypto.lower()}_balance": balances[crypto] for crypto in CRYPTOS}
+        result = {f"{crypto.lower()}_balance": self.format(value=balances[crypto], crypto=crypto) for crypto in CRYPTOS}
         result.update({f"{crypto.lower()}_balance_fiat": fiat_balances[crypto] for crypto in CRYPTOS})
         result.update(
             {
-                f"{crypto.lower()}_wallet_link": get_unit(crypto)(network=CRYPTO_SETTINGS[crypto]['network']).get_wallet_url(
-                    db_user['profile']['wallet'][crypto]['address']
-                )
+                f"{crypto.lower()}_wallet_link": get_unit(crypto)(
+                    network=CRYPTO_SETTINGS[crypto]['network']
+                ).get_wallet_url(db_user['profile']['wallet'][crypto]['address'])
                 for crypto in CRYPTOS
             }
         )
@@ -84,7 +84,10 @@ class CryptoContext(DefaultContext):
         rates = await self.get_rates()
         rate = rates.get(crypto, 0)
         templates_map = {
-            self.triggers.REPLENISH: ["wallet/replenish.html", {**ctx, 'address': address}],
+            self.triggers.REPLENISH: [
+                "wallet/replenish.html",
+                {**ctx, 'address': address, 'network': CRYPTO_SETTINGS[crypto]['network']},
+            ],
             self.triggers.WITHDRAW: ["wallet/withdraw.html", ctx],
             self.triggers.CREATE_CHECK: [
                 "wallet/check_amount.html",

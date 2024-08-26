@@ -1,11 +1,13 @@
 import hashlib
 # from eth_account import Account
 from web3 import Web3
+from database.db import DB
 from decorators import timed_cache
 from settings.common import CRYPTO_SETTINGS, ETH
+from units.base import Unit
 
 
-class ETHUnit:
+class ETHUnit(Unit):
     NETWORKS = {
         'mainnet': 'mainnet.infura.io/v3',
         'testnet': 'goerli.infura.io/v3',
@@ -22,6 +24,7 @@ class ETHUnit:
         if network not in self.NETWORKS:
             raise ValueError(f'Unsupported network: {network}')
 
+        self.crypto = ETH
         self.network = network
         self.web3 = Web3(Web3.HTTPProvider(f'https://{self.NETWORKS[self.network]}/{CRYPTO_SETTINGS[ETH]['api_key']}'))
 
@@ -44,10 +47,20 @@ class ETHUnit:
         try:
             balance_wei = self.web3.eth.get_balance(address)
             balance_eth = self.web3.from_wei(balance_wei, 'ether')
-            return balance_eth
+            user = await DB.users.find_one({f'profile.wallet.{ETH}.address': address})
+            return balance_eth  - await self.get_hold(user_id=user['user_id'], crypto=ETH)
         except Exception as e:
-            print(f"Error fetching balance: {e}")
+            print(f"[{ETH}] Error fetching balance: {e}")
             return 0.0
+
+    async def get_network_fee(self) -> float:
+        try:
+            gas_price_wei = self.web3.eth.gas_price
+            gas_price_gwei = self.web3.from_wei(gas_price_wei, 'gwei')
+            return gas_price_gwei
+        except Exception as e:
+            print(f"Error fetching network fees: {e}")
+            return {}
 
     async def send_coins(self, user: dict, to_address: str, amount: float) -> str:
         # Convert the amount from ETH to Wei
@@ -79,3 +92,10 @@ class ETHUnit:
         except Exception as e:
             print(f"Error sending coins: {e}")
             return None
+
+    def estimate_transaction_size(self) -> float:
+        return 0.1  # Примерная оценка размера транзакции в kb для ETH
+
+    def from_satoshis(self, fee_in_wei: int) -> float:
+        # 1 ETH = 1,000,000,000,000,000,000 wei
+        return fee_in_wei / 1e18    

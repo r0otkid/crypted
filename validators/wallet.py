@@ -1,4 +1,6 @@
 from gettext import gettext as _
+from database.db import DB
+from database.user import update_user_hold
 from settings.common import BOT_NAME, CRYPTO_SETTINGS
 from decimal import Decimal, InvalidOperation
 from utils import get_unit
@@ -30,15 +32,20 @@ class CheckAmountValidator(DefaultValidator):
         )
         try:
             value = Decimal(value)
-            if min_check_amount < value < max_check_amount:
+            if min_check_amount <= value <= max_check_amount:
                 await self.update_chain(selected=selected, value=value)
                 check = await create_check(user=self.context.user, amount=value, cryptocurrency=selected[-2])
+                db_fee = await DB.network_fees.find_one({'crypto': selected[-2]})
+                amount = value + Decimal(db_fee['network_fee'])
+                await update_user_hold(
+                    user_id=self.context.user['user_id'], crypto=selected[-2], amount=amount
+                )
                 text = await self.context.render_template(
                     'wallet/check.html',
                     {
-                        "fiat_amount": round(check.amount * rate, 2),
+                        "fiat_amount": round(Decimal(check['amount']) * Decimal(rate), 2),
                         "check": check,
-                        "wallet_currency": self.user['profile']['wallet_currency'],
+                        "wallet_currency": self.context.user['profile']['wallet_currency'],
                         "bot_name": BOT_NAME,
                     },
                 )
@@ -93,17 +100,16 @@ class WithdrawAddressValidator(DefaultValidator):
         crypto = selected[-2]
 
         await self.clear_chain(selected)
-        unit = get_unit(crypto)
-
+        crypto_unit = get_unit(crypto)
+        unit = crypto_unit(network=CRYPTO_SETTINGS[crypto]['network'])
         text = _("Неправильный адрес кошелька")
-        available_balance = self.context.user['profile']['wallet'][crypto][
-            'balance'
-        ]  # todo: холд + комиссия + проверка на минимальный баланс
+        wallet = self.context.user['profile']['wallet'][crypto]
+        # todo: холд + комиссия + проверка на минимальный баланс
 
-        if unit(network=CRYPTO_SETTINGS[crypto]['network']).validate_address(value):
+        if unit.validate_address(value):
             await self.update_chain(selected=selected, value=value)
             text = await self.context.render_template(
-                'wallet/withdraw_amount.html', {'crypto': crypto, 'available_balance': available_balance}
+                'wallet/withdraw_amount.html', {'crypto': crypto, 'available_balance': wallet['balance']}
             )
 
         return text
@@ -114,21 +120,21 @@ class WithdrawAmountValidator(DefaultValidator):
         selected = await self.context.selected()
         crypto = selected[-3]
         bot_settings = await self.context.bot_settings
-
+        wallet = self.context.user['profile']['wallet'][crypto]
         await self.clear_chain(selected)
-
-        text = await self.context.render_template('errors/withdraw_error.html', {})
+        crypto_unit = get_unit(crypto)
+        unit = crypto_unit(network=CRYPTO_SETTINGS[crypto]['network'])
+        has_balance, fee = await unit.has_sufficient_balance(address=wallet['address'], amount=value)
+        text = await self.context.render_template('errors/withdraw_error.html', {'fee': fee, "crypto": crypto})
         try:
             value = Decimal(value)
             min_withdraw_amount = bot_settings['limits'][crypto]['min']
             max_withdraw_amount = bot_settings['limits'][crypto]['max']
-            if min_withdraw_amount <= value <= max_withdraw_amount:
-                await self.update_chain(selected=selected, value=value)
-                unit = get_unit(crypto)
-                tx_hash = await unit(network=CRYPTO_SETTINGS[crypto]['network']).send_coins(
-                    user=self.context.user, to_address=selected[-2], amount=value
-                )
-                text = _('Монеты успешно отправлены') + f"\n{tx_hash}"
+            if has_balance:
+                if min_withdraw_amount <= value <= max_withdraw_amount:
+                    await self.update_chain(selected=selected, value=value)
+                    tx_hash = await unit.send_coins(user=self.context.user, to_address=selected[-2], amount=value)
+                    text = _('Монеты успешно отправлены') + f"\n{tx_hash}"
         except InvalidOperation:
             pass
         return text

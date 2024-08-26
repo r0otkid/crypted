@@ -3,9 +3,11 @@ import logging
 from traceback import print_tb
 from aiohttp import web
 from aiogram import Bot, types
+from database.db import DB
 from dispatcher import CustomDispatcher, handle_callback_query, handle_message
 from rates import CryptoRatesUpdater
-from settings.common import BOT_TOKEN, BASE_URL
+from settings.common import BOT_TOKEN, BASE_URL, CRYPTO_SETTINGS
+from utils import ALL_UNITS
 
 logging.basicConfig(level=logging.INFO)
 
@@ -33,12 +35,22 @@ async def set_webhook(app):
     webhook_url = f'{BASE_URL}/{BOT_TOKEN}/'
     await bot.set_webhook(webhook_url)
     logging.info(f'Webhook set to {webhook_url}')
+    
+async def get_network_fees(app):
+    def _get_crypto(unit):
+        return unit.__name__[:-4]
+    for unit in ALL_UNITS:
+        if _get_crypto(unit) in CRYPTO_SETTINGS:
+            network = CRYPTO_SETTINGS[_get_crypto(unit)]['network']
+            network_fee = await unit(network=network).get_network_fee()
+            await DB.network_fees.update_one({'crypto': _get_crypto(unit)}, {'$set': {'network_fee': str(network_fee)}}, upsert=True)
 
 app = web.Application()
 updater = CryptoRatesUpdater(update_interval=60)
 
 app.router.add_view('/{bot_token}/', WebHookView)
 app.on_startup.append(set_webhook)
+app.on_startup.append(get_network_fees)
 # app.on_startup.append(updater.start)
 
 

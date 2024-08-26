@@ -1,5 +1,6 @@
 from decimal import Decimal
 import logging
+from traceback import print_tb
 from typing import Optional
 from bitmerchant.wallet import Wallet
 from bitmerchant.network import BitcoinMainNet, BitcoinTestNet
@@ -13,9 +14,9 @@ import base58
 from decorators import timed_cache
 
 
-
 class BTCUnit(Unit):
     def __init__(self, network='mainnet'):
+        self.crypto = BTC
         self.network = network
         self.symbol = 'bcy' if self.network == 'testnet' else 'btc'
         self.api_token = CRYPTO_SETTINGS[BTC]['api_key']
@@ -90,12 +91,22 @@ class BTCUnit(Unit):
                 coin_symbol=self.symbol,
                 api_key=self.api_token
             )
-            balance =  address_overview['balance'] / Decimal(1e8)
-            return float(balance)
+            user = await DB.users.find_one({f'profile.wallet.{BTC}.address': address})
+            balance =  address_overview['final_balance'] / Decimal(1e8)
+            return float(balance) - await self.get_hold(user_id=user['user_id'], crypto=BTC)
         
         except Exception as e:
-            print(f"Error fetching balance: {e}")
+            print(f"[{BTC}] Error fetching balance: {e}")
+            print_tb(e.__traceback__)
             return None
+
+    async def get_network_fee(self) -> float:
+        try:
+            fees = blockcypher.get_blockchain_fee_estimates(coin_symbol=self.symbol, api_key=self.api_token)
+            return fees['medium_fee_per_kb']
+        except Exception as e:
+            print(f"Error fetching network fees: {e}")
+            return {}
 
     async def send_coins(self, user: dict, to_address: str, amount: float) -> str:
         # Convert the amount from BTC to satoshis
@@ -109,3 +120,10 @@ class BTCUnit(Unit):
         )
         print("Txid is", tx_ref)
         return tx_ref
+
+    def estimate_transaction_size(self) -> float:
+        return 0.5  # Примерная оценка размера транзакции в kb для расчета комиссии
+
+    def from_satoshis(self, fee_in_satoshis: int) -> float:
+        # 1 BTC = 100,000,000 satoshis
+        return fee_in_satoshis / 1e8

@@ -9,6 +9,8 @@ from units.eth import ETHUnit
 from units.trx import TRXUnit
 from units.ton import TONUnit
 
+ALL_UNITS = [BTCUnit, ETHUnit, TRXUnit, TONUnit]
+
 def generate_unique_code():
     # Создаем UUID4
     uuid_bytes = uuid.uuid4().bytes

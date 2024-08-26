@@ -1,3 +1,4 @@
+from decimal import Decimal
 from aiogram.types import Update
 from database.db import DB
 from units.btc import BTCUnit
@@ -5,9 +6,10 @@ from units.eth import ETHUnit
 from units.trx import TRXUnit
 from units.ton import TONUnit
 from settings.common import CRYPTO_SETTINGS, CRYPTOS
+from utils import ALL_UNITS
 
 async def create_user_dict(source, user_id, date):
-    wallet = {crypto: {'balance': 0} for crypto in CRYPTOS}
+    wallet = {crypto: {'balance': 0, 'hold': 0} for crypto in CRYPTOS}
     return {
         'user_id': user_id,
         'profile': {
@@ -43,14 +45,19 @@ async def update_or_create_user(update: Update):
     if not db_user:
         db_user = await create_user_dict(source, user_id, date)
 
-    crypto_units = [BTCUnit, TRXUnit, TONUnit, ETHUnit]
+    crypto_units = ALL_UNITS
     if not db_user.get('profile', {}).get('wallet'):
         for unit_class in crypto_units:
             address, private_key = await generate_crypto_data(unit_class, user_id)
             db_user['profile']['wallet'][unit_class.__name__[:-4]].update({
                 'address': address,
+                'hold': 0,
                 'private_key': private_key if unit_class is not TRXUnit else private_key.hex()
             })
+
+    for unit_class in crypto_units:
+        if not db_user.get('profile', {}).get('wallet', {}).get(unit_class.__name__[:-4], {}).get('hold'):
+            db_user['profile']['wallet'][unit_class.__name__[:-4]]['hold'] = 0
 
     # Сохраняем обновленные данные пользователя в базе данных
     await DB.users.update_one(
@@ -82,3 +89,11 @@ async def save_user(user_id: int, user_data: dict):
 
 async def get_user_by_id(user_id: int):
     return await DB.users.find_one({'user_id': user_id})
+
+async def update_user_hold(user_id: int, crypto: str, amount: Decimal):
+    user = await get_user_by_id(user_id=user_id)
+    hold = user['profile']['wallet'][crypto]['hold']
+    return await DB.users.update_one(
+        {'user_id': user_id},
+        {'$set': {f'profile.wallet.{crypto}.hold': str(Decimal(f'{hold}') + amount)}}
+    )

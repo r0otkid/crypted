@@ -1,3 +1,4 @@
+from decimal import Decimal
 from typing import Optional
 from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
 from jinja2 import Environment, FileSystemLoader
@@ -33,6 +34,17 @@ class DefaultContext(RatesContext, BotSettingsContext):
         self.page = page
         self.user = user
         self.triggers = Triggers
+
+    @staticmethod
+    def format(value: Decimal, crypto: str) -> str:
+        round_map = {
+            'BTC': 8,
+            'ETH': 6,
+            'USDT': 2,
+            'TRX': 7,
+            'TON': 7
+        }
+        return str(round(value, round_map.get(crypto, 2)))
     
     async def render_template(self, template_name: str, ctx: Optional[dict] = None) -> str:
         template = env.get_template(template_name)
